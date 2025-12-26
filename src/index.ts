@@ -21,7 +21,7 @@ import { getTools, executeTool } from './tools.js';
  */
 
 // Configuração
-const API_BASE_URL = process.env.BREWTECO_API_URL || 'http://srv1105495.hstgr.cloud/brew/v1';
+const API_BASE_URL = process.env.BREWTECO_API_URL || 'http://srv1105495.hstgr.cloud/brew/v1/';
 const HTTP_PORT = parseInt(process.env.MCP_PORT || '3710', 10);
 const SERVER_NAME = 'brewteco-mcp-server';
 const SERVER_VERSION = '1.0.0';
@@ -70,7 +70,7 @@ class BrewtecoMcpServer {
     });
 
     // Lista de ferramentas disponíveis
-    this.app.get('/mcp/tools', (req: Request, res: Response) => {
+    this.app.get('/mcptools', (req: Request, res: Response) => {
       console.error('📋 Listando ferramentas disponíveis');
       res.json({
         tools: getTools()
@@ -112,10 +112,17 @@ class BrewtecoMcpServer {
     this.app.get('/mcp/sse', async (req: Request, res: Response) => {
       console.error('🔌 Nova conexão SSE recebida');
 
-      // Configurar SSE
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
+      // Configurar SSE headers
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+        'X-Accel-Buffering': 'no'
+      });
+
+      // Enviar comentário inicial para manter conexão viva
+      res.write(':ok\n\n');
 
       // Criar servidor MCP
       const server = new Server(
@@ -134,68 +141,109 @@ class BrewtecoMcpServer {
       this.setupMcpHandlers(server);
 
       // Criar transport SSE
-      const transport = new SSEServerTransport('/mcp/message', res);
+      try {
+        const transport = new SSEServerTransport('/mcp/message', res);
+        await server.connect(transport);
+        console.error('✅ Servidor MCP conectado via SSE');
+      } catch (error) {
+        console.error('❌ Erro ao conectar transport SSE:', error);
+        res.end();
+        return;
+      }
 
-      // Conectar servidor ao transport
-      await server.connect(transport);
+      // Heartbeat para manter conexão viva
+      const heartbeat = setInterval(() => {
+        res.write(':heartbeat\n\n');
+      }, 30000); // a cada 30 segundos
 
       // Cleanup quando a conexão fechar
       req.on('close', () => {
+        clearInterval(heartbeat);
         console.error('🔌 Conexão SSE fechada');
+      });
+
+      req.on('error', (error) => {
+        clearInterval(heartbeat);
+        console.error('❌ Erro na conexão SSE:', error);
       });
     });
 
     // Endpoint POST para MCP (alternativa ao SSE)
     this.app.post('/mcp/message', async (req: Request, res: Response) => {
       console.error('📨 Mensagem MCP recebida');
-
-      // Criar servidor MCP para esta requisição
-      const server = new Server(
-        {
-          name: SERVER_NAME,
-          version: SERVER_VERSION
-        },
-        {
-          capabilities: {
-            tools: {}
-          }
-        }
-      );
-
-      this.setupMcpHandlers(server);
+      console.error('📝 Body:', JSON.stringify(req.body, null, 2));
 
       try {
-        // Processar a mensagem
         const message = req.body;
         
-        // Simular resposta MCP (simplificado)
+        // Responder ao método tools/list
         if (message.method === 'tools/list') {
           res.json({
-            tools: getTools()
+            jsonrpc: '2.0',
+            id: message.id,
+            result: {
+              tools: getTools()
+            }
           });
-        } else if (message.method === 'tools/call') {
+          return;
+        } 
+        
+        // Responder ao método tools/call
+        if (message.method === 'tools/call') {
           const { name, arguments: args } = message.params;
           const result = await executeTool(name, args || {}, this.apiClient);
           
           res.json({
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(result.data, null, 2)
-              }
-            ]
+            jsonrpc: '2.0',
+            id: message.id,
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(result.data, null, 2)
+                }
+              ]
+            }
           });
-        } else {
-          res.status(400).json({
-            error: 'Método não suportado',
-            code: 'UNSUPPORTED_METHOD'
-          });
+          return;
         }
+        
+        // Responder ao método initialize
+        if (message.method === 'initialize') {
+          res.json({
+            jsonrpc: '2.0',
+            id: message.id,
+            result: {
+              protocolVersion: '2024-11-05',
+              capabilities: {
+                tools: {}
+              },
+              serverInfo: {
+                name: SERVER_NAME,
+                version: SERVER_VERSION
+              }
+            }
+          });
+          return;
+        }
+
+        // Método não suportado
+        res.status(400).json({
+          jsonrpc: '2.0',
+          id: message.id,
+          error: {
+            code: -32601,
+            message: `Método não suportado: ${message.method}`
+          }
+        });
       } catch (error) {
         console.error('❌ Erro ao processar mensagem:', error);
         res.status(500).json({
-          error: error instanceof Error ? error.message : 'Erro desconhecido',
-          code: 'PROCESSING_ERROR'
+          jsonrpc: '2.0',
+          error: {
+            code: -32603,
+            message: error instanceof Error ? error.message : 'Erro desconhecido'
+          }
         });
       }
     });
@@ -204,7 +252,7 @@ class BrewtecoMcpServer {
     this.app.get('/mcp', (req: Request, res: Response) => {
       res.send(`
 <!DOCTYPE html>
-<html
+<html>
 <head>
     <title>Brewteco MCP Server</title>
     <style>
@@ -281,7 +329,7 @@ class BrewtecoMcpServer {
     
     <div class="endpoint">
         <span class="method get">GET</span>
-        <code>/mcp/sse</code>
+        <code>/sse</code>
         <p>Endpoint SSE para protocolo MCP completo</p>
     </div>
     
@@ -401,7 +449,7 @@ class BrewtecoMcpServer {
         console.error('🌐 SERVIDOR MCP HTTP');
         console.error('='.repeat(60));
         console.error(`🚀 Rodando na porta: ${HTTP_PORT}`);
-        console.error(`🔗 URL: http://localhost:${HTTP_PORT}`);
+        console.error(`🔗 URL: http://localhost:${HTTP_PORT}/mcp`);
         console.error(`📊 Health: http://localhost:${HTTP_PORT}/mcp/health`);
         console.error(`🛠️  Tools: http://localhost:${HTTP_PORT}/mcp/tools`);
         console.error('='.repeat(60));
