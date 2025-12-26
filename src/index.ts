@@ -21,7 +21,7 @@ import { getTools, executeTool } from './tools.js';
  */
 
 // Configuração
-const API_BASE_URL = process.env.BREWTECO_API_URL || 'http://srv1105495.hstgr.cloud/brew/v1/';
+const API_BASE_URL = process.env.BREWTECO_API_URL || 'http://srv1105495.hstgr.cloud/brew/v1/health';
 const HTTP_PORT = parseInt(process.env.MCP_PORT || '3710', 10);
 const SERVER_NAME = 'brewteco-mcp-server';
 const SERVER_VERSION = '1.0.0';
@@ -70,7 +70,7 @@ class BrewtecoMcpServer {
     });
 
     // Lista de ferramentas disponíveis
-    this.app.get('/mcptools', (req: Request, res: Response) => {
+    this.app.get('/mcp/tools', (req: Request, res: Response) => {
       console.error('📋 Listando ferramentas disponíveis');
       res.json({
         tools: getTools()
@@ -112,18 +112,8 @@ class BrewtecoMcpServer {
     this.app.get('/mcp/sse', async (req: Request, res: Response) => {
       console.error('🔌 Nova conexão SSE recebida');
 
-      // Configurar SSE headers
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*',
-        'X-Accel-Buffering': 'no'
-      });
-
-      // Enviar comentário inicial para manter conexão viva
-      res.write(':ok\n\n');
-
+      // NÃO definir headers aqui - o SSEServerTransport fará isso
+      
       // Criar servidor MCP
       const server = new Server(
         {
@@ -140,30 +130,25 @@ class BrewtecoMcpServer {
       // Configurar handlers
       this.setupMcpHandlers(server);
 
-      // Criar transport SSE
+      // Criar transport SSE - ele define os headers automaticamente
       try {
         const transport = new SSEServerTransport('/mcp/message', res);
         await server.connect(transport);
         console.error('✅ Servidor MCP conectado via SSE');
       } catch (error) {
         console.error('❌ Erro ao conectar transport SSE:', error);
-        res.end();
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Failed to establish SSE connection' });
+        }
         return;
       }
 
-      // Heartbeat para manter conexão viva
-      const heartbeat = setInterval(() => {
-        res.write(':heartbeat\n\n');
-      }, 30000); // a cada 30 segundos
-
       // Cleanup quando a conexão fechar
       req.on('close', () => {
-        clearInterval(heartbeat);
         console.error('🔌 Conexão SSE fechada');
       });
 
       req.on('error', (error) => {
-        clearInterval(heartbeat);
         console.error('❌ Erro na conexão SSE:', error);
       });
     });
@@ -329,7 +314,7 @@ class BrewtecoMcpServer {
     
     <div class="endpoint">
         <span class="method get">GET</span>
-        <code>/sse</code>
+        <code>/mcp/sse</code>
         <p>Endpoint SSE para protocolo MCP completo</p>
     </div>
     
@@ -354,7 +339,7 @@ class BrewtecoMcpServer {
     <h2>📝 Exemplos de Uso</h2>
     
     <h3>Obter Vendas</h3>
-    <pre>curl -X POST http://localhost:${HTTP_PORT}/tools/obter_vendas \\
+    <pre>curl -X POST http://localhost:${HTTP_PORT}/mcp/tools/obter_vendas \\
   -H "Content-Type: application/json" \\
   -d '{
     "data_inicio": "2024-12-01",
@@ -363,7 +348,7 @@ class BrewtecoMcpServer {
   }'</pre>
   
     <h3>Listar Clientes VIP</h3>
-    <pre>curl -X POST http://localhost:${HTTP_PORT}/tools/filtrar_clientes \\
+    <pre>curl -X POST http://localhost:${HTTP_PORT}/mcp/tools/filtrar_clientes \\
   -H "Content-Type: application/json" \\
   -d '{
     "gasto_total_min": 1000,
@@ -373,8 +358,8 @@ class BrewtecoMcpServer {
     
     <h2>🔗 Links</h2>
     <ul>
-        <li><a href="/mcp/health">Health Check</a></li>
-        <li><a href="/mcp/tools">Ver Ferramentas</a></li>
+        <li><a href="/health">Health Check</a></li>
+        <li><a href="/tools">Ver Ferramentas</a></li>
         <li><a href="${API_BASE_URL}/health" target="_blank">Status da API</a></li>
     </ul>
     
