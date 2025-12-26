@@ -21,7 +21,7 @@ import { getTools, executeTool } from './tools.js';
  */
 
 // Configuração
-const API_BASE_URL = process.env.BREWTECO_API_URL || 'http://srv1105495.hstgr.cloud/brew/v1/health';
+const API_BASE_URL = process.env.BREWTECO_API_URL || 'http://srv1105495.hstgr.cloud/brew/v1';
 const HTTP_PORT = parseInt(process.env.MCP_PORT || '3710', 10);
 const SERVER_NAME = 'brewteco-mcp-server';
 const SERVER_VERSION = '1.0.0';
@@ -234,7 +234,7 @@ class BrewtecoMcpServer {
     });
 
     // Documentação da API
-    this.app.get('/mcp', (req: Request, res: Response) => {
+    this.app.get('/', (req: Request, res: Response) => {
       res.send(`
 <!DOCTYPE html>
 <html>
@@ -358,8 +358,8 @@ class BrewtecoMcpServer {
     
     <h2>🔗 Links</h2>
     <ul>
-        <li><a href="/health">Health Check</a></li>
-        <li><a href="/tools">Ver Ferramentas</a></li>
+        <li><a href="/mcp/health">Health Check</a></li>
+        <li><a href="/mcp/tools">Ver Ferramentas</a></li>
         <li><a href="${API_BASE_URL}/health" target="_blank">Status da API</a></li>
     </ul>
     
